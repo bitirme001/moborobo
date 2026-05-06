@@ -1,0 +1,23 @@
+# ROS build folders
+build/
+devel/
+install/
+logs/
+
+# ROS runtime
+.ros/
+
+# Python
+*.pyc
+__pycache__/
+
+# Bag files
+*.bag
+
+# Editors
+.vscode/
+.idea/
+
+# Maps (isteğe bağlı)
+*.pgm
+*.yaml
