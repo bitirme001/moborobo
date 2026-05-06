@@ -2,6 +2,7 @@
 #include <serial/serial.h>
 
 #include <sstream>
+#include <vector>
 
 #include "Constants.h"
 #include "ErrorCodes.h"
@@ -12,34 +13,53 @@ using namespace std;
 class Driver
 {
 public:
-  Driver()
+  Driver(const string &preferred_port = "") : preferred_port_(preferred_port)
   {
-    Connect();
-    Arm();
+    if (Connect() == RQ_SUCCESS)
+      Arm();
   }
   ~Driver() { Disconnect(); }
 
   int Connect()
   {
-    string response = "";
-    int status = device.Connect("/dev/ttyACM0");
-    if (status != RQ_SUCCESS)
+    vector<string> candidate_ports;
+    auto add_candidate = [&candidate_ports](const string &port) {
+      for (const string &existing_port : candidate_ports)
+      {
+        if (existing_port == port)
+          return;
+      }
+      candidate_ports.push_back(port);
+    };
+
+    if (!preferred_port_.empty())
+      add_candidate(preferred_port_);
+
+    add_candidate("/dev/ttyACM0");
+    add_candidate("/dev/ttyUSB0");
+
+    for (const string &port : candidate_ports)
     {
-      ROS_INFO("Failed to connect with motor driver");
-    }
-    else
-    {
-      ROS_INFO("Connection with motor driver has been established");
+      int status = device.Connect(port);
+      if (status == RQ_SUCCESS)
+      {
+        connected_port_ = port;
+        ROS_INFO_STREAM("Connection with motor driver has been established on " << connected_port_);
+        return status;
+      }
+
+      ROS_WARN_STREAM("Failed to connect with motor driver on " << port);
     }
 
-    return status;
+    ROS_ERROR("Motor driver could not be opened on /dev/ttyACM0 or /dev/ttyUSB0");
+    return RQ_ERR_OPEN_PORT;
   }
   void Disconnect() { device.Disconnect(); }
   bool IsConnected() { return device.IsConnected(); }
   int Arm()
   {
     int status = 0;
-    if ((status = device.SetCommand(_MG, 1)) = RQ_SUCCESS)
+    if ((status = device.SetCommand(_MG, 1)) == RQ_SUCCESS)
       return 0;
     else
       return 1;
@@ -99,6 +119,8 @@ public:
 
 
 private:
+  string preferred_port_;
+  string connected_port_;
   RoboteqDevice device;
   void Wait() { sleepms(10); }
 };

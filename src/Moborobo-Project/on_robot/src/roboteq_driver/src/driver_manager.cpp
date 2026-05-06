@@ -26,7 +26,10 @@ int main(int argc, char **argv)
 {
     ros::init(argc, argv, "roboteq_driver");
     ros::NodeHandle n;
-    Driver driver;
+    ros::NodeHandle private_nh("~");
+    std::string motor_port;
+    private_nh.param<std::string>("port", motor_port, "");
+    Driver driver(motor_port);
 
     ros::Subscriber motor_command_sub = n.subscribe<robot_msgs::MotorSpeedCommand>("/motor_commands", 1, motor_command_cb);
 

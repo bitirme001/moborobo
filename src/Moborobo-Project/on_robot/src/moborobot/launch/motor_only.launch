@@ -1,8 +1,11 @@
 <?xml version="1.0"?>
 <launch>
+    <arg name="motor_port" default=""/>
 
-    <node pkg="roboteq_driver" type="roboteq_driver" name="roboteq_driver" output="screen"/>
-
+    <node pkg="roboteq_driver" type="roboteq_driver" name="roboteq_driver" output="screen">
+        <param name="port" value="$(arg motor_port)"/>
+    </node>
+    
     <include file="$(find kinematics)/launch/kinematics.launch"/>
 
     <include file="$(find joy_to_vel)/launch/joy.launch"/>
