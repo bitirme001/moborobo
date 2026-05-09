@@ -1,0 +1,71 @@
+rosservice call /slam_toolbox/deserialize_map "filename: '/home/mali7319/catkin_ws/simtest/simtest1_serial'
+match_type: 2
+initial_pose:
+  x: 0.00
+  y: 0.00
+  theta: 0.00" 
+
+rostopic pub /move_base_simple/goal geometry_msgs/PoseStamped "header:
+  seq: 1
+  stamp:
+    secs: 0
+    nsecs: 0
+  frame_id: 'map'
+pose:
+  position:
+    x: -6.55
+    y: 5.78
+    z: 0
+  orientation:
+    x: 0
+    y: 0
+    z: 0.68892145
+    w: 0.72483601" 
+
+rosservice call /slam_toolbox/deserialize_map "filename: '/home/mali7319/catkin_ws/simtest/simtest2_serial'
+match_type: 2
+initial_pose:
+  x: -6.55
+  y: 5.78
+  theta: 1.52" 
+
+rostopic pub /move_base_simple/goal geometry_msgs/PoseStamped "header:
+  seq: 3
+  stamp:
+    secs: 0
+    nsecs: 0
+  frame_id: 'map'
+pose:
+  position:
+    x: 5.06
+    y: 5.82
+    z: 0
+  orientation:
+    x: 0
+    y: 0
+    z: -0.67797181
+    w: 0.7350879" 
+
+rosservice call /slam_toolbox/deserialize_map "filename: '/home/mali7319/catkin_ws/simtest/simtest3_serial'
+match_type: 2
+initial_pose:
+  x: 5.06
+  y: 5.82
+  theta: -1.49" 
+
+rostopic pub /move_base_simple/goal geometry_msgs/PoseStamped "header:
+  seq: 0
+  stamp:
+    secs: 0
+    nsecs: 0
+  frame_id: 'map'
+pose:
+  position:
+    x: 1.12
+    y: -4.81
+    z: 0
+  orientation:
+    x: 0
+    y: 0
+    z: -0.99492435
+    w: 0.10062573" 

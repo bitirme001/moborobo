@@ -1,0 +1,11 @@
+<launch>
+  <node pkg="smart_waste_nav"
+        type="waypoint_executor.py"
+        name="waypoint_executor"
+        output="screen">
+
+    <param name="waypoints_file"
+           value="$(find smart_waste_nav)/config/waypoints.yaml" />
+
+  </node>
+</launch>
