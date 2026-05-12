@@ -10,7 +10,7 @@ logs/
 # Python
 *.pyc
 __pycache__/
-
+.DS_Store
 # Bag files
 *.bag
 
