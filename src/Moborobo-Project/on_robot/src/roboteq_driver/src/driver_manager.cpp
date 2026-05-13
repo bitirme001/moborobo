@@ -26,8 +26,8 @@ int main(int argc, char **argv)
 {
     ros::init(argc, argv, "roboteq_driver");
     ros::NodeHandle n;
-    Driver driver;
-
+    Driver driver; 
+    
     ros::Subscriber motor_command_sub = n.subscribe<robot_msgs::MotorSpeedCommand>("/motor_commands", 1, motor_command_cb);
 
     ros::Publisher rpm_pub = n.advertise<robot_msgs::MotorSpeedCommand>("/motor_rpms", 1);

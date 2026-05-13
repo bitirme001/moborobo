@@ -2,6 +2,6 @@
   <node name="map_server"
         pkg="map_server"
         type="map_server"
-        args="$(find smart_waste_nav)/maps/moborobo_map.yaml" />
+        args="$(find smart_waste_nav)/maps/karsi.yaml" />
 </launch>
 
