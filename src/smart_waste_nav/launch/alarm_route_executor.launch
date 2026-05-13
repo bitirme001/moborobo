@@ -1,0 +1,39 @@
+<launch>
+  <node pkg="smart_waste_nav"
+        type="alarm_route_executor.py"
+        name="alarm_route_executor"
+        output="screen">
+
+    <param name="nodes_file"
+           value="$(find smart_waste_nav)/config/navigation_nodes.yaml" />
+    <param name="enable_ros_alarm_topic"
+           value="false" />
+    <param name="enable_mqtt"
+           value="true" />
+    <param name="alarm_topic"
+           value="/waste_alarm" />
+    <param name="mqtt_host"
+           value="localhost" />
+    <param name="mqtt_port"
+           value="1883" />
+    <param name="mqtt_topic"
+           value="waste/alarm" />
+    <param name="mqtt_client_id"
+           value="smart_waste_nav_executor" />
+    <param name="mqtt_qos"
+           value="0" />
+    <param name="mqtt_keepalive"
+           value="60" />
+    <param name="alarm_filter_enabled"
+           value="false" />
+    <param name="fill_percent_threshold"
+           value="80.0" />
+    <param name="goal_tolerance"
+           value="0.75" />
+    <param name="wait_after_goal"
+           value="1.0" />
+    <param name="max_exact_route_nodes"
+           value="9" />
+
+  </node>
+</launch>

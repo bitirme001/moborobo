@@ -1,0 +1,14 @@
+<launch>
+  <node pkg="smart_waste_nav"
+        type="alarm_route_executor.py"
+        name="alarm_route_executor_demo"
+        output="screen">
+
+    <param name="nodes_file"
+           value="$(find smart_waste_nav)/config/navigation_nodes.yaml" />
+    <param name="alarm_filter_enabled"
+           value="false" />
+    <rosparam param="demo_alarm_node_ids">[bin_2, bin_4]</rosparam>
+
+  </node>
+</launch>

@@ -1,0 +1,17 @@
+<launch>
+  <node pkg="smart_waste_nav"
+        type="node_path_recorder.py"
+        name="node_path_recorder"
+        output="screen">
+
+    <param name="output_file"
+           value="$(find smart_waste_nav)/config/recorded_nodes.yaml" />
+    <param name="distance_threshold"
+           value="1.0" />
+    <param name="record_rate"
+           value="2.0" />
+    <param name="id_prefix"
+           value="route_node" />
+
+  </node>
+</launch>

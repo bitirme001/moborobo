@@ -1,19 +1,31 @@
 #!/usr/bin/env python3
 
+import actionlib
+import os
+
 import rospy
 import yaml
-import math
-import actionlib
 
+from actionlib_msgs.msg import GoalStatus
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from tf.transformations import quaternion_from_euler
 
 
+DEFAULT_NODES_FILE = os.path.realpath(
+    os.path.join(os.path.dirname(__file__), "..", "config", "navigation_nodes.yaml")
+)
+
+
 def load_waypoints(path):
     with open(path, "r") as f:
-        data = yaml.safe_load(f)
+        data = yaml.safe_load(f) or {}
 
-    return data["waypoints"]
+    if "nodes" in data:
+        return data["nodes"]
+    if "waypoints" in data:
+        return data["waypoints"]
+
+    raise KeyError("Expected either 'nodes' or 'waypoints' in navigation config")
 
 
 def create_goal(wp):
@@ -40,7 +52,7 @@ def main():
 
     waypoints_file = rospy.get_param(
         "~waypoints_file",
-        "/home/cansu/moborobo_ws/src/smart_waste_nav/config/waypoints.yaml"
+        DEFAULT_NODES_FILE
     )
 
     waypoints = load_waypoints(waypoints_file)
@@ -65,7 +77,7 @@ def main():
 
         result_state = client.get_state()
 
-        if result_state == actionlib.GoalStatus.SUCCEEDED:
+        if result_state == GoalStatus.SUCCEEDED:
             rospy.loginfo("Reached waypoint: %s", wp["id"])
         else:
             rospy.logwarn("Failed to reach waypoint: %s, state: %s", wp["id"], result_state)

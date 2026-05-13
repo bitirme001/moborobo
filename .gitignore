@@ -21,3 +21,4 @@ __pycache__/
 # Maps (isteğe bağlı)
 *.pgm
 *.yaml
+!src/smart_waste_nav/config/navigation_nodes.yaml
