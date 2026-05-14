@@ -12,60 +12,57 @@ except ImportError:
     mqtt = None
 
 
-FILL_FULL_THRESHOLD_PERCENT = 80.0
-CLEAR_COOLDOWN_MS = 15000
 PUBLISH_INTERVAL_SECONDS = 1.0
-SOURCE_LABEL = "mock_pc"
 
 # Mock publisher bilgisayarında doğrudan bu listeyi düzenleyebilirsiniz.
 MOCK_BINS = [
     {
-        "id": 2,
-        "nodeId": "bin_2",
-        "name": "Trash Bin 2",
+        "node_id": 2,
         "lat": 39.87225,
         "lng": 32.73535,
+        "weightKg": 8.0,
         "fillPercent": 25.0,
+        "isFull": True,
     },
     {
-        "id": 3,
-        "nodeId": "bin_3",
-        "name": "Trash Bin 3",
+        "node_id": 3,
         "lat": 39.8724,
         "lng": 32.7355,
+        "weightKg": 9.5,
         "fillPercent": 45.0,
+        "isFull": False,
     },
     {
-        "id": 4,
-        "nodeId": "bin_4",
-        "name": "Trash Bin 4",
+        "node_id": 4,
         "lat": 39.87255,
         "lng": 32.73565,
+        "weightKg": 13.0,
         "fillPercent": 82.0,
+        "isFull": True,
     },
     {
-        "id": 5,
-        "nodeId": "bin_5",
-        "name": "Trash Bin 5",
+        "node_id": 5,
         "lat": 39.8727,
         "lng": 32.7358,
+        "weightKg": 10.0,
         "fillPercent": 60.0,
+        "isFull": False,
     },
     {
-        "id": 6,
-        "nodeId": "bin_6",
-        "name": "Trash Bin 6",
+        "node_id": 6,
         "lat": 39.87285,
         "lng": 32.73595,
+        "weightKg": 15.0,
         "fillPercent": 91.0,
+        "isFull": True,
     },
     {
-        "id": 7,
-        "nodeId": "bin_7",
-        "name": "Trash Bin 7",
+        "node_id": 7,
         "lat": 39.873,
         "lng": 32.7361,
+        "weightKg": 6.0,
         "fillPercent": 10.0,
+        "isFull": False,
     },
 ]
 
@@ -120,22 +117,21 @@ def normalize_bins(raw_bins):
         if not coerce_bool(raw_bin.get("enabled", True), default=True):
             continue
 
-        bin_id = coerce_int(raw_bin.get("id"))
+        bin_id = coerce_int(raw_bin.get("node_id"))
         if bin_id is None:
-            raise ValueError("Each mock bin entry must contain a numeric 'id'.")
+            raise ValueError("Each mock bin entry must contain a numeric 'node_id'.")
 
         fill_percent = coerce_float(raw_bin.get("fillPercent"), default=0.0)
         fill_percent = max(0.0, min(100.0, fill_percent))
 
         bins.append(
             {
-                "id": bin_id,
-                "nodeId": str(raw_bin.get("nodeId") or "bin_%d" % bin_id),
-                "name": str(raw_bin.get("name") or "Trash Bin %d" % bin_id),
+                "node_id": bin_id,
                 "lat": coerce_float(raw_bin.get("lat")),
                 "lng": coerce_float(raw_bin.get("lng")),
-                "weightKg": coerce_float(raw_bin.get("weightKg")),
+                "weightKg": coerce_float(raw_bin.get("weightKg"), default=0.0),
                 "fillPercent": fill_percent,
+                "isFull": coerce_bool(raw_bin.get("isFull"), default=False),
             }
         )
 
@@ -158,9 +154,10 @@ class MockBinStatusPublisher:
         self.qos = args.qos
         self.retain = args.retain
         self.shutdown_requested = False
-        self.latched_alarm_by_id = {}
-        self.last_cleared_at_ms = {}
         self.bins = normalize_bins(MOCK_BINS)
+        self.current_is_full_by_id = {
+            bin_payload["node_id"]: bin_payload["isFull"] for bin_payload in self.bins
+        }
 
         self.client = mqtt.Client(client_id=self.client_id)
         if self.username:
@@ -202,40 +199,21 @@ class MockBinStatusPublisher:
         if bin_id is None:
             return
 
-        self.latched_alarm_by_id[bin_id] = False
-        self.last_cleared_at_ms[bin_id] = int(time.time() * 1000)
+        self.current_is_full_by_id[bin_id] = False
         print("Cleared mock alarm for bin %d" % bin_id)
 
-    def compute_alarm_latched(self, bin_payload):
-        bin_id = bin_payload["id"]
-        fill_percent = bin_payload["fillPercent"]
-        raw_is_full = fill_percent >= FILL_FULL_THRESHOLD_PERCENT
-        last_cleared_at_ms = self.last_cleared_at_ms.get(bin_id, 0)
-        in_cooldown = (int(time.time() * 1000) - last_cleared_at_ms) < CLEAR_COOLDOWN_MS
-
-        if raw_is_full and not in_cooldown:
-            self.latched_alarm_by_id[bin_id] = True
-
-        return raw_is_full, self.latched_alarm_by_id.get(bin_id, False)
-
     def build_status_payload(self, bin_payload):
-        raw_is_full, alarm_latched = self.compute_alarm_latched(bin_payload)
-
         payload = OrderedDict()
-        payload["id"] = bin_payload["id"]
-        payload["nodeId"] = bin_payload["nodeId"]
-        payload["name"] = bin_payload["name"]
+        payload["node_id"] = bin_payload["node_id"]
         if bin_payload["lat"] is not None:
             payload["lat"] = bin_payload["lat"]
         if bin_payload["lng"] is not None:
             payload["lng"] = bin_payload["lng"]
-        if bin_payload["weightKg"] is not None:
-            payload["weightKg"] = bin_payload["weightKg"]
+        payload["weightKg"] = round(bin_payload["weightKg"], 1)
         payload["fillPercent"] = round(bin_payload["fillPercent"], 1)
-        payload["rawIsFull"] = raw_is_full
-        payload["isFull"] = alarm_latched
-        payload["alarm"] = alarm_latched
-        payload["source"] = SOURCE_LABEL
+        payload["isFull"] = self.current_is_full_by_id.get(
+            bin_payload["node_id"], bin_payload["isFull"]
+        )
         return payload
 
     def publish_once(self):
@@ -252,7 +230,7 @@ class MockBinStatusPublisher:
             if getattr(info, "rc", 0) != 0:
                 print(
                     "Publish failed for bin %d with rc=%s"
-                    % (bin_payload["id"], getattr(info, "rc", 0))
+                    % (bin_payload["node_id"], getattr(info, "rc", 0))
                 )
                 continue
 

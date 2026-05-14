@@ -18,8 +18,6 @@ __pycache__/
 .vscode/
 .idea/
 
-# Maps (isteğe bağlı)
-*.pgm
-*.yaml
+# Maps (isteğe bağlı) 
 !src/smart_waste_nav/config/*.yaml
 !src/smart_waste_nav/config/navigation_nodes.yaml
