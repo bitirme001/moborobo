@@ -17,8 +17,10 @@ from actionlib_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from nav_msgs.msg import Path
+from nav_msgs.srv import GetPlan
 from std_msgs.msg import String
 from tf.transformations import euler_from_quaternion, quaternion_from_euler
+from static_map_planner import StaticOccupancyMap
 
 try:
     import paho.mqtt.client as mqtt
@@ -28,6 +30,9 @@ except ImportError:
 
 DEFAULT_NODES_FILE = os.path.realpath(
     os.path.join(os.path.dirname(__file__), "..", "config", "navigation_nodes.yaml")
+)
+DEFAULT_MAP_YAML_FILE = os.path.realpath(
+    os.path.join(os.path.dirname(__file__), "..", "maps", "sunum_map.yaml")
 )
 
 
@@ -44,6 +49,22 @@ def coerce_float(value):
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def coerce_bool(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "y", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "n", "off"}:
+            return False
+    return default
 
 
 def load_nodes(path):
@@ -92,6 +113,45 @@ def create_goal(node, frame_id="map"):
     return goal
 
 
+def create_pose_stamped(x, y, yaw, frame_id):
+    pose = PoseStamped()
+    pose.header.frame_id = frame_id
+    pose.header.stamp = rospy.Time.now()
+    pose.pose.position.x = x
+    pose.pose.position.y = y
+    pose.pose.position.z = 0.0
+
+    quaternion = quaternion_from_euler(0.0, 0.0, yaw)
+    pose.pose.orientation.x = quaternion[0]
+    pose.pose.orientation.y = quaternion[1]
+    pose.pose.orientation.z = quaternion[2]
+    pose.pose.orientation.w = quaternion[3]
+    return pose
+
+
+def path_length_from_poses(poses):
+    if len(poses) < 2:
+        return 0.0
+
+    total_distance = 0.0
+    previous_pose = poses[0].pose.position
+    for pose_stamped in poses[1:]:
+        current_pose = pose_stamped.pose.position
+        total_distance += math.hypot(
+            current_pose.x - previous_pose.x,
+            current_pose.y - previous_pose.y,
+        )
+        previous_pose = current_pose
+    return total_distance
+
+
+def path_points_from_poses(poses):
+    return [
+        (pose_stamped.pose.position.x, pose_stamped.pose.position.y)
+        for pose_stamped in poses
+    ]
+
+
 def haversine_distance_meters(lat_1, lng_1, lat_2, lng_2):
     earth_radius_meters = 6371000.0
     lat_1_rad = math.radians(lat_1)
@@ -112,10 +172,10 @@ class AlarmRouteExecutor:
     def __init__(self):
         self.nodes_file = rospy.get_param("~nodes_file", DEFAULT_NODES_FILE)
         self.alarm_topic = rospy.get_param("~alarm_topic", "/waste_alarm")
-        self.enable_ros_alarm_topic = bool(
-            rospy.get_param("~enable_ros_alarm_topic", True)
+        self.enable_ros_alarm_topic = coerce_bool(
+            rospy.get_param("~enable_ros_alarm_topic", True), default=True
         )
-        self.enable_mqtt = bool(rospy.get_param("~enable_mqtt", False))
+        self.enable_mqtt = coerce_bool(rospy.get_param("~enable_mqtt", False))
         self.mqtt_host = rospy.get_param("~mqtt_host", "localhost")
         self.mqtt_port = int(rospy.get_param("~mqtt_port", 1883))
         self.mqtt_topic = rospy.get_param("~mqtt_topic", "waste/alarm")
@@ -131,9 +191,30 @@ class AlarmRouteExecutor:
         self.goal_tolerance = float(rospy.get_param("~goal_tolerance", 0.75))
         self.wait_after_goal = float(rospy.get_param("~wait_after_goal", 1.0))
         self.max_exact_route_nodes = int(rospy.get_param("~max_exact_route_nodes", 9))
-        self.alarm_filter_enabled = bool(rospy.get_param("~alarm_filter_enabled", False))
+        self.alarm_filter_enabled = coerce_bool(
+            rospy.get_param("~alarm_filter_enabled", False)
+        )
         self.fill_percent_threshold = float(
             rospy.get_param("~fill_percent_threshold", 80.0)
+        )
+        self.use_move_base_plan_costs = coerce_bool(
+            rospy.get_param("~use_move_base_plan_costs", True), default=True
+        )
+        self.make_plan_service_name = rospy.get_param(
+            "~make_plan_service_name", "/move_base/make_plan"
+        )
+        self.make_plan_tolerance = float(
+            rospy.get_param("~make_plan_tolerance", 0.10)
+        )
+        self.use_static_map_costs = coerce_bool(
+            rospy.get_param("~use_static_map_costs", True), default=True
+        )
+        self.map_yaml_path = rospy.get_param("~map_yaml_path", DEFAULT_MAP_YAML_FILE)
+        self.static_map_clearance_m = float(
+            rospy.get_param("~static_map_clearance_m", 0.20)
+        )
+        self.static_map_allow_unknown = coerce_bool(
+            rospy.get_param("~static_map_allow_unknown", False)
         )
 
         self.nodes = load_nodes(self.nodes_file)
@@ -143,9 +224,31 @@ class AlarmRouteExecutor:
         if not self.active_node_ids:
             raise ValueError("No active nodes found in %s" % self.nodes_file)
 
+        self.static_map = None
+        if self.use_static_map_costs:
+            try:
+                self.static_map = StaticOccupancyMap.from_map_yaml(
+                    self.map_yaml_path,
+                    clearance_m=self.static_map_clearance_m,
+                    allow_unknown=self.static_map_allow_unknown,
+                )
+                rospy.loginfo(
+                    "Loaded static map costs from %s for obstacle-aware route planning.",
+                    self.map_yaml_path,
+                )
+            except Exception as error:
+                rospy.logwarn(
+                    "Could not load static map costs from %s: %s. Falling back to Euclidean edge costs.",
+                    self.map_yaml_path,
+                    error,
+                )
+
         self.name_index = self.build_name_index()
-        self.graph = self.build_graph()
+        self.edge_path_cache = {}
+        self.edge_cost_cache = {}
         self.shortest_path_cache = {}
+        self.distance_matrix = {}
+        self.graph = self.build_graph()
         self.pending_alarm_nodes = OrderedDict()
         self.pending_alarm_lock = threading.Lock()
         self.replan_requested = False
@@ -155,6 +258,7 @@ class AlarmRouteExecutor:
         self.mqtt_client = None
         self.mosquitto_process = None
         self.mosquitto_thread = None
+        self.make_plan_service = None
 
         self.client = actionlib.SimpleActionClient("move_base", MoveBaseAction)
         self.tf_listener = tf.TransformListener()
@@ -180,6 +284,14 @@ class AlarmRouteExecutor:
                     index[normalized] = node_id
         return index
 
+    def refresh_graph(self):
+        self.edge_path_cache = {}
+        self.edge_cost_cache = {}
+        self.shortest_path_cache = {}
+        self.distance_matrix = {}
+        self.graph = self.build_graph()
+        self.build_distance_matrix()
+
     def build_graph(self):
         graph = {node_id: {} for node_id in self.active_node_ids}
         has_explicit_edges = False
@@ -196,7 +308,7 @@ class AlarmRouteExecutor:
                     continue
 
                 has_explicit_edges = True
-                cost = self.euclidean_node_distance(node_id, neighbor_id)
+                cost = self.compute_edge_cost(node_id, neighbor_id)
                 graph[node_id][neighbor_id] = cost
                 graph[neighbor_id][node_id] = cost
 
@@ -209,7 +321,7 @@ class AlarmRouteExecutor:
         )
         for source_index, source_id in enumerate(self.active_node_ids):
             for target_id in self.active_node_ids[source_index + 1 :]:
-                cost = self.euclidean_node_distance(source_id, target_id)
+                cost = self.compute_edge_cost(source_id, target_id)
                 graph[source_id][target_id] = cost
                 graph[target_id][source_id] = cost
 
@@ -219,6 +331,141 @@ class AlarmRouteExecutor:
         source = self.nodes[source_id]
         target = self.nodes[target_id]
         return math.hypot(source["x"] - target["x"], source["y"] - target["y"])
+
+    def compute_edge_cost(self, source_id, target_id):
+        edge_key = tuple(sorted((source_id, target_id)))
+        if edge_key in self.edge_cost_cache:
+            return self.edge_cost_cache[edge_key]
+
+        source = self.nodes[source_id]
+        target = self.nodes[target_id]
+        direct_path = [
+            (source["x"], source["y"]),
+            (target["x"], target["y"]),
+        ]
+        euclidean_cost = self.euclidean_node_distance(source_id, target_id)
+        self.edge_path_cache[(source_id, target_id)] = direct_path
+        self.edge_path_cache[(target_id, source_id)] = list(reversed(direct_path))
+
+        if self.make_plan_service is not None:
+            edge_cost, world_path = self.plan_cost_between_nodes(source_id, target_id)
+            if not math.isinf(edge_cost) and world_path:
+                self.edge_path_cache[(source_id, target_id)] = world_path
+                self.edge_path_cache[(target_id, source_id)] = list(reversed(world_path))
+                self.edge_cost_cache[edge_key] = edge_cost
+                return edge_cost
+
+        if self.static_map is None:
+            self.edge_cost_cache[edge_key] = euclidean_cost
+            return euclidean_cost
+
+        edge_cost, world_path = self.static_map.plan_path(
+            source["x"],
+            source["y"],
+            target["x"],
+            target["y"],
+        )
+        if math.isinf(edge_cost) or not world_path:
+            rospy.logwarn(
+                "Static map path not found between %s and %s. Using Euclidean fallback.",
+                source_id,
+                target_id,
+            )
+            self.edge_cost_cache[edge_key] = euclidean_cost
+            return euclidean_cost
+
+        self.edge_path_cache[(source_id, target_id)] = world_path
+        self.edge_path_cache[(target_id, source_id)] = list(reversed(world_path))
+        self.edge_cost_cache[edge_key] = edge_cost
+        return edge_cost
+
+    def connect_make_plan_service(self):
+        if not self.use_move_base_plan_costs:
+            return
+
+        try:
+            rospy.wait_for_service(self.make_plan_service_name, timeout=5.0)
+            self.make_plan_service = rospy.ServiceProxy(
+                self.make_plan_service_name, GetPlan
+            )
+            rospy.loginfo(
+                "Connected to planner service %s for route cost matrix.",
+                self.make_plan_service_name,
+            )
+        except (rospy.ROSException, rospy.ROSInterruptException) as error:
+            rospy.logwarn(
+                "Planner service %s not available: %s. Falling back to static map or Euclidean costs.",
+                self.make_plan_service_name,
+                error,
+            )
+            self.make_plan_service = None
+
+    def plan_cost_from_pose(self, pose, node_id):
+        if self.make_plan_service is None:
+            return float("inf"), []
+
+        node = self.nodes[node_id]
+        start_pose = create_pose_stamped(
+            pose["x"], pose["y"], pose.get("yaw", 0.0), self.map_frame
+        )
+        goal_pose = create_pose_stamped(node["x"], node["y"], node["yaw"], self.map_frame)
+
+        try:
+            response = self.make_plan_service(
+                start=start_pose,
+                goal=goal_pose,
+                tolerance=self.make_plan_tolerance,
+            )
+        except rospy.ServiceException as error:
+            rospy.logwarn_throttle(
+                5.0,
+                "make_plan failed from current pose to %s: %s",
+                node_id,
+                error,
+            )
+            return float("inf"), []
+
+        if not response.plan.poses:
+            return float("inf"), []
+
+        return path_length_from_poses(response.plan.poses), path_points_from_poses(
+            response.plan.poses
+        )
+
+    def plan_cost_between_nodes(self, source_id, target_id):
+        if self.make_plan_service is None:
+            return float("inf"), []
+
+        source = self.nodes[source_id]
+        target = self.nodes[target_id]
+        start_pose = create_pose_stamped(
+            source["x"], source["y"], source["yaw"], self.map_frame
+        )
+        goal_pose = create_pose_stamped(
+            target["x"], target["y"], target["yaw"], self.map_frame
+        )
+
+        try:
+            response = self.make_plan_service(
+                start=start_pose,
+                goal=goal_pose,
+                tolerance=self.make_plan_tolerance,
+            )
+        except rospy.ServiceException as error:
+            rospy.logwarn(
+                "make_plan failed between %s and %s: %s",
+                source_id,
+                target_id,
+                error,
+            )
+            return float("inf"), []
+
+        if not response.plan.poses:
+            return float("inf"), []
+
+        return path_length_from_poses(response.plan.poses), path_points_from_poses(
+            response.plan.poses
+        )
 
     def parse_alarm_payloads(self, payload):
         data = payload
@@ -280,16 +527,29 @@ class AlarmRouteExecutor:
         if not self.alarm_filter_enabled:
             return True
 
-        if payload.get("isFull") is True:
+        if coerce_bool(payload.get("isFull")):
             return True
 
         fill_percent = coerce_float(payload.get("fillPercent"))
         return fill_percent is not None and fill_percent >= self.fill_percent_threshold
 
     def match_alarm_to_node(self, payload):
-        name_key = normalize_name(payload.get("name"))
-        if name_key in self.name_index:
-            return self.name_index[name_key]
+        candidate_fields = [
+            payload.get("nodeId"),
+            payload.get("node_id"),
+            payload.get("pointId"),
+            payload.get("point_id"),
+            payload.get("binId"),
+            payload.get("bin_id"),
+            payload.get("id"),
+            payload.get("name"),
+            payload.get("point"),
+        ]
+
+        for candidate in candidate_fields:
+            name_key = normalize_name(candidate)
+            if name_key in self.name_index:
+                return self.name_index[name_key]
 
         latitude = coerce_float(payload.get("lat"))
         longitude = coerce_float(payload.get("lng"))
@@ -478,11 +738,44 @@ class AlarmRouteExecutor:
         best_node_id = None
         best_distance = None
         for node_id in self.active_node_ids:
-            distance = self.pose_distance_to_node(pose, node_id)
+            distance = self.pose_travel_cost_to_node(pose, node_id)
             if best_distance is None or distance < best_distance:
                 best_distance = distance
                 best_node_id = node_id
         return best_node_id
+
+    def pose_travel_cost_to_node(self, pose, node_id):
+        if self.make_plan_service is not None:
+            travel_cost, _ = self.plan_cost_from_pose(pose, node_id)
+            if not math.isinf(travel_cost):
+                return travel_cost
+
+        if self.static_map is None:
+            return self.pose_distance_to_node(pose, node_id)
+
+        node = self.nodes[node_id]
+        travel_cost, _ = self.static_map.plan_path(
+            pose["x"],
+            pose["y"],
+            node["x"],
+            node["y"],
+        )
+        if math.isinf(travel_cost):
+            return self.pose_distance_to_node(pose, node_id)
+        return travel_cost
+
+    def build_distance_matrix(self):
+        for source_id in self.active_node_ids:
+            self.distance_matrix[source_id] = {}
+            for target_id in self.active_node_ids:
+                if source_id == target_id:
+                    self.distance_matrix[source_id][target_id] = 0.0
+                    continue
+
+                distance, _ = self.shortest_path(source_id, target_id)
+                self.distance_matrix[source_id][target_id] = distance
+
+        rospy.loginfo("Built %dx%d node distance matrix.", len(self.active_node_ids), len(self.active_node_ids))
 
     def consume_reached_alarm_nodes(self, pose):
         with self.pending_alarm_lock:
@@ -568,7 +861,7 @@ class AlarmRouteExecutor:
         pair_distances = {}
 
         for node_id in target_node_ids:
-            distance, _ = self.shortest_path(start_node_id, node_id)
+            distance = self.distance_matrix[start_node_id][node_id]
             if math.isinf(distance):
                 return []
             pair_distances[(start_node_id, node_id)] = distance
@@ -577,7 +870,7 @@ class AlarmRouteExecutor:
             for target_id in target_node_ids:
                 if source_id == target_id:
                     continue
-                distance, _ = self.shortest_path(source_id, target_id)
+                distance = self.distance_matrix[source_id][target_id]
                 if math.isinf(distance):
                     return []
                 pair_distances[(source_id, target_id)] = distance
@@ -644,7 +937,7 @@ class AlarmRouteExecutor:
             best_node_id = None
             best_distance = float("inf")
             for candidate_node_id in remaining_node_ids:
-                distance, _ = self.shortest_path(current_node_id, candidate_node_id)
+                distance = self.distance_matrix[current_node_id][candidate_node_id]
                 if distance < best_distance:
                     best_distance = distance
                     best_node_id = candidate_node_id
@@ -679,19 +972,32 @@ class AlarmRouteExecutor:
         path_message.header.frame_id = self.map_frame
         path_message.header.stamp = rospy.Time.now()
 
-        for node_id in route_node_ids:
+        route_points = []
+        for index, node_id in enumerate(route_node_ids):
+            if index == 0:
+                node = self.nodes[node_id]
+                route_points.append((node["x"], node["y"]))
+                continue
+
+            previous_node_id = route_node_ids[index - 1]
+            edge_path = self.edge_path_cache.get((previous_node_id, node_id))
+            if edge_path:
+                for edge_index, point in enumerate(edge_path):
+                    if route_points and edge_index == 0:
+                        continue
+                    route_points.append(point)
+                continue
+
             node = self.nodes[node_id]
+            route_points.append((node["x"], node["y"]))
+
+        for x, y in route_points:
             pose_stamped = PoseStamped()
             pose_stamped.header = path_message.header
-            pose_stamped.pose.position.x = node["x"]
-            pose_stamped.pose.position.y = node["y"]
+            pose_stamped.pose.position.x = x
+            pose_stamped.pose.position.y = y
             pose_stamped.pose.position.z = 0.0
-
-            quaternion = quaternion_from_euler(0.0, 0.0, node["yaw"])
-            pose_stamped.pose.orientation.x = quaternion[0]
-            pose_stamped.pose.orientation.y = quaternion[1]
-            pose_stamped.pose.orientation.z = quaternion[2]
-            pose_stamped.pose.orientation.w = quaternion[3]
+            pose_stamped.pose.orientation.w = 1.0
             path_message.poses.append(pose_stamped)
 
         self.route_publisher.publish(path_message)
@@ -758,6 +1064,8 @@ class AlarmRouteExecutor:
         rospy.loginfo("Waiting for move_base action server...")
         self.client.wait_for_server()
         rospy.loginfo("Connected to move_base.")
+        self.connect_make_plan_service()
+        self.refresh_graph()
 
         self.queue_demo_alarms()
         idle_rate = rospy.Rate(2)

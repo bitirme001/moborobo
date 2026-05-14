@@ -2,9 +2,9 @@ nodes:
   - id: bin_1
     name: "Trash Bin 1"
     aliases: ["bin1"]
-    x: 0.541
-    y: -0.170
-    yaw: 2.967
+    x: -4.124
+    y: 16.333
+    yaw: 1.587
     lat: null
     lng: null
     active: true
@@ -13,9 +13,9 @@ nodes:
   - id: bin_2
     name: "Trash Bin 2"
     aliases: ["bin2"]
-    x: -4.156
-    y: 0.405
-    yaw: -1.873
+    x: -3.710
+    y: 2.924
+    yaw: 1.553
     lat: null
     lng: null
     active: true
@@ -24,9 +24,9 @@ nodes:
   - id: bin_3
     name: "Trash Bin 3"
     aliases: ["bin3"]
-    x: -13.758
-    y: -1.297
-    yaw: 2.818
+    x: 2.512
+    y: -0.713
+    yaw: -0.090
     lat: null
     lng: null
     active: true
@@ -35,10 +35,43 @@ nodes:
   - id: bin_4
     name: "Trash Bin 4"
     aliases: ["bin4"]
-    x: -27.697
-    y: 2.403
-    yaw: 2.926
+    x: -1.030
+    y: -8.117
+    yaw: -1.783
     lat: null
     lng: null
     active: true
-    neighbors: [bin_3]
+    neighbors: [bin_3, bin_5]
+
+  - id: bin_5
+    name: "Trash Bin 5"
+    aliases: ["bin5"]
+    x: 5.129
+    y: -7.421
+    yaw: -0.083
+    lat: null
+    lng: null
+    active: true
+    neighbors: [bin_4, bin_6]
+
+  - id: bin_6
+    name: "Trash Bin 6"
+    aliases: ["bin6"]
+    x: 0.885
+    y: -4.215
+    yaw: -1.455
+    lat: null
+    lng: null
+    active: true
+    neighbors: [bin_5, bin_7]
+
+  - id: bin_7
+    name: "Trash Bin 7"
+    aliases: ["bin7"]
+    x: -1.283
+    y: -1.198
+    yaw: -3.047
+    lat: null
+    lng: null
+    active: true
+    neighbors: [bin_6]

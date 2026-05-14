@@ -5,7 +5,7 @@
         output="screen">
 
     <param name="waypoints_file"
-           value="$(find smart_waste_nav)/config/navigation_nodes.yaml" />
+           value="$(find smart_waste_nav)/config/waypoints.yaml" />
 
   </node>
 </launch>

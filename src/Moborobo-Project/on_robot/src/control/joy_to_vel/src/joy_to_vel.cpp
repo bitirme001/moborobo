@@ -54,8 +54,15 @@ int main(int argc, char **argv)
             geometry_msgs::Twist twist_msg;
             if (abs(joy_msg.axes[4]) > 0.01)
                 twist_msg.linear.x = joy_msg.axes[4] * max_vx;
-            if (abs(joy_msg.axes[0]) > 0.01)
-                twist_msg.angular.z = -1*joy_msg.axes[0] * max_rad_sn;
+	    	
+	    	double turn_axis = 0.0;
+
+			if (abs(joy_msg.axes[0]) > 0.01)
+	    		turn_axis = joy_msg.axes[0];
+			else if (abs(joy_msg.axes[6]) > 0.01)
+	    		turn_axis = joy_msg.axes[6];
+
+			twist_msg.angular.z = -1 * turn_axis * max_rad_sn;
             cmd_vel_pb.publish(twist_msg);
         }
 

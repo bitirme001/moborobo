@@ -169,6 +169,7 @@ catkin_install_python(PROGRAMS
   scripts/waypoint_executor.py
   scripts/alarm_route_executor.py
   scripts/node_path_recorder.py
+  scripts/static_map_planner.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
