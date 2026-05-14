@@ -1,0 +1,49 @@
+waypoints:
+  - id: bin_1
+    name: "Trash Bin 1"
+    x: -4.124
+    y: 16.333
+    yaw: 1.587
+    active: true
+
+  - id: bin_2
+    name: "Trash Bin 2"
+    x: -3.710
+    y: 2.924
+    yaw: 1.553
+    active: true
+
+  - id: bin_3
+    name: "Trash Bin 3"
+    x: 2.512
+    y: -0.713
+    yaw: -0.090
+    active: false
+
+  - id: bin_4
+    name: "Trash Bin 4"
+    x: -1.030
+    y: -8.117
+    yaw: -1.783
+    active: false
+
+  - id: bin_5
+    name: "Trash Bin 5"
+    x: 5.129
+    y: -7.421
+    yaw: -0.083
+    active: false
+
+  - id: bin_6
+    name: "Trash Bin 6"
+    x: 0.885
+    y: -4.215
+    yaw: -1.455
+    active: false
+
+  - id: bin_7
+    name: "Trash Bin 7"
+    x: -1.283
+    y: -1.198
+    yaw: -3.047
+    active: false
