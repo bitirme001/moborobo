@@ -125,12 +125,15 @@ Robot motor + odom:
 ```bash
 cd /Users/nisa/Desktop/moborobo
 source devel/setup.bash
+sudo chmod 666 /dev/ttyACM0
 roslaunch moborobot motor_only.launch
 ```
 
 LiDAR:
 
 ```bash
+sudo ifconfig enp0s31f6 192.168.1.102 netmask 255.255.255.0 up
+
 cd /Users/nisa/Desktop/moborobo
 source devel/setup.bash
 roslaunch rslidar_pointcloud rs_lidar_16.launch
