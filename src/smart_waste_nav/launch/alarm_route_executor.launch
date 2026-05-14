@@ -1,4 +1,10 @@
 <launch>
+  <!-- Bu IP'yi Ubuntu / robot PC'nin aynı Wi-Fi ağındaki adresi olarak değiştirin. -->
+  <arg name="mqtt_host" default="192.168.1.100" />
+  <arg name="mqtt_port" default="1883" />
+  <arg name="mqtt_topic" default="bin/status" />
+  <arg name="mqtt_clear_topic" default="bin/cleared" />
+
   <node pkg="smart_waste_nav"
         type="alarm_route_executor.py"
         name="alarm_route_executor"
@@ -13,19 +19,25 @@
     <param name="alarm_topic"
            value="/waste_alarm" />
     <param name="mqtt_host"
-           value="localhost" />
+           value="$(arg mqtt_host)" />
     <param name="mqtt_port"
-           value="1883" />
+           value="$(arg mqtt_port)" />
     <param name="mqtt_topic"
-           value="ultrasonic/distance" />
+           value="$(arg mqtt_topic)" />
+    <param name="mqtt_clear_topic"
+           value="$(arg mqtt_clear_topic)" />
     <param name="mqtt_client_id"
            value="smart_waste_nav_executor" />
     <param name="mqtt_qos"
            value="0" />
     <param name="mqtt_keepalive"
            value="60" />
+    <param name="mqtt_clear_qos"
+           value="0" />
+    <param name="publish_cleared_on_reach"
+           value="true" />
     <param name="alarm_filter_enabled"
-           value="false" />
+           value="true" />
     <param name="fill_percent_threshold"
            value="80.0" />
     <param name="use_move_base_plan_costs"

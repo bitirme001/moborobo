@@ -4,6 +4,7 @@ import heapq
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -90,6 +91,8 @@ def load_nodes(path):
             "yaw": float(raw_node.get("yaw", 0.0)),
             "lat": coerce_float(raw_node.get("lat")),
             "lng": coerce_float(raw_node.get("lng")),
+            "mqtt_id": raw_node.get("mqtt_id"),
+            "clear_id": raw_node.get("clear_id"),
             "active": bool(raw_node.get("active", True)),
             "neighbors": [str(neighbor) for neighbor in raw_node.get("neighbors", [])],
         }
@@ -178,7 +181,8 @@ class AlarmRouteExecutor:
         self.enable_mqtt = coerce_bool(rospy.get_param("~enable_mqtt", False))
         self.mqtt_host = rospy.get_param("~mqtt_host", "localhost")
         self.mqtt_port = int(rospy.get_param("~mqtt_port", 1883))
-        self.mqtt_topic = rospy.get_param("~mqtt_topic", "waste/alarm")
+        self.mqtt_topic = rospy.get_param("~mqtt_topic", "bin/status")
+        self.mqtt_clear_topic = rospy.get_param("~mqtt_clear_topic", "bin/cleared")
         self.mqtt_client_id = rospy.get_param(
             "~mqtt_client_id", "smart_waste_nav_executor"
         )
@@ -186,6 +190,13 @@ class AlarmRouteExecutor:
         self.mqtt_password = rospy.get_param("~mqtt_password", "")
         self.mqtt_qos = int(rospy.get_param("~mqtt_qos", 0))
         self.mqtt_keepalive = int(rospy.get_param("~mqtt_keepalive", 60))
+        self.mqtt_clear_qos = int(rospy.get_param("~mqtt_clear_qos", 0))
+        self.mqtt_clear_retain = coerce_bool(
+            rospy.get_param("~mqtt_clear_retain", False)
+        )
+        self.publish_cleared_on_reach = coerce_bool(
+            rospy.get_param("~publish_cleared_on_reach", True), default=True
+        )
         self.base_frame = rospy.get_param("~base_frame", "base_link")
         self.map_frame = rospy.get_param("~map_frame", "map")
         self.goal_tolerance = float(rospy.get_param("~goal_tolerance", 0.75))
@@ -274,10 +285,41 @@ class AlarmRouteExecutor:
         rospy.on_shutdown(self.shutdown)
         self.setup_alarm_inputs()
 
+    def parse_bin_numeric_id(self, value):
+        if value is None:
+            return None
+
+        if isinstance(value, bool):
+            return None
+
+        if isinstance(value, int):
+            return value
+
+        if isinstance(value, float):
+            return int(value)
+
+        text = str(value).strip()
+        if not text:
+            return None
+
+        if text.isdigit():
+            return int(text)
+
+        match = re.search(r"(\d+)", text)
+        if match:
+            return int(match.group(1))
+
+        return None
+
     def build_name_index(self):
         index = {}
         for node_id, node in self.nodes.items():
-            candidates = [node_id, node["name"]] + node.get("aliases", [])
+            candidates = [
+                node_id,
+                node["name"],
+                node.get("mqtt_id"),
+                node.get("clear_id"),
+            ] + node.get("aliases", [])
             for candidate in candidates:
                 normalized = normalize_name(candidate)
                 if normalized and normalized not in index:
@@ -527,8 +569,11 @@ class AlarmRouteExecutor:
         if not self.alarm_filter_enabled:
             return True
 
-        if coerce_bool(payload.get("isFull")):
-            return True
+        if payload.get("alarm") is not None:
+            return coerce_bool(payload.get("alarm"))
+
+        if payload.get("isFull") is not None:
+            return coerce_bool(payload.get("isFull"))
 
         fill_percent = coerce_float(payload.get("fillPercent"))
         return fill_percent is not None and fill_percent >= self.fill_percent_threshold
@@ -792,6 +837,11 @@ class AlarmRouteExecutor:
         with self.pending_alarm_lock:
             return list(self.pending_alarm_nodes.keys())
 
+    def get_pending_alarm_payload(self, node_id):
+        with self.pending_alarm_lock:
+            payload = self.pending_alarm_nodes.get(node_id)
+            return dict(payload) if payload is not None else None
+
     def has_pending_alarm_nodes(self):
         with self.pending_alarm_lock:
             return bool(self.pending_alarm_nodes)
@@ -807,6 +857,118 @@ class AlarmRouteExecutor:
     def is_replan_requested(self):
         with self.pending_alarm_lock:
             return self.replan_requested
+
+    def resolve_clear_bin_id(self, node_id):
+        payload = self.get_pending_alarm_payload(node_id)
+        candidate_values = []
+
+        if payload is not None:
+            candidate_values.extend(
+                [
+                    payload.get("binId"),
+                    payload.get("bin_id"),
+                    payload.get("nodeId"),
+                    payload.get("node_id"),
+                    payload.get("pointId"),
+                    payload.get("point_id"),
+                    payload.get("id"),
+                    payload.get("name"),
+                ]
+            )
+
+        node = self.nodes.get(node_id, {})
+        candidate_values.extend(
+            [
+                node.get("clear_id"),
+                node.get("mqtt_id"),
+                node.get("id"),
+                node.get("name"),
+            ]
+        )
+
+        for candidate_value in candidate_values:
+            numeric_id = self.parse_bin_numeric_id(candidate_value)
+            if numeric_id is not None:
+                return numeric_id
+
+        return None
+
+    def publish_clear_message(self, node_id):
+        if not self.publish_cleared_on_reach:
+            return True
+
+        clear_bin_id = self.resolve_clear_bin_id(node_id)
+        if clear_bin_id is None:
+            rospy.logwarn("Could not resolve clear bin id for node %s", node_id)
+            return False
+
+        payload_text = json.dumps({"id": clear_bin_id, "emptied": True})
+
+        if self.mqtt_client is not None:
+            result = self.mqtt_client.publish(
+                self.mqtt_clear_topic,
+                payload_text,
+                qos=self.mqtt_clear_qos,
+                retain=self.mqtt_clear_retain,
+            )
+            result_code = getattr(result, "rc", 0)
+            if result_code == 0:
+                rospy.loginfo(
+                    "Published clear message for node %s to %s: %s",
+                    node_id,
+                    self.mqtt_clear_topic,
+                    payload_text,
+                )
+                return True
+
+            rospy.logwarn(
+                "MQTT clear publish failed for node %s with rc=%s",
+                node_id,
+                result_code,
+            )
+            return False
+
+        if shutil.which("mosquitto_pub"):
+            command = [
+                "mosquitto_pub",
+                "-h",
+                self.mqtt_host,
+                "-p",
+                str(self.mqtt_port),
+                "-t",
+                self.mqtt_clear_topic,
+                "-q",
+                str(self.mqtt_clear_qos),
+                "-m",
+                payload_text,
+            ]
+            if self.mqtt_clear_retain:
+                command.append("-r")
+            if self.mqtt_username:
+                command.extend(["-u", self.mqtt_username])
+            if self.mqtt_password:
+                command.extend(["-P", self.mqtt_password])
+
+            try:
+                subprocess.run(command, check=True)
+                rospy.loginfo(
+                    "Published clear message for node %s with mosquitto_pub: %s",
+                    node_id,
+                    payload_text,
+                )
+                return True
+            except (subprocess.CalledProcessError, OSError) as error:
+                rospy.logwarn(
+                    "mosquitto_pub clear publish failed for node %s: %s",
+                    node_id,
+                    error,
+                )
+                return False
+
+        rospy.logwarn(
+            "No MQTT publisher available to send clear message for node %s.", node_id
+        )
+        return False
 
     def shortest_path(self, start_id, target_id):
         cache_key = (start_id, target_id)
@@ -1109,6 +1271,7 @@ class AlarmRouteExecutor:
                     goal_succeeded = self.send_goal_to_node(node_id)
 
                 if goal_succeeded and node_id in self.get_pending_alarm_node_ids():
+                    self.publish_clear_message(node_id)
                     self.clear_alarm_node(node_id)
                     rospy.loginfo("Alarm serviced at node %s", node_id)
 
