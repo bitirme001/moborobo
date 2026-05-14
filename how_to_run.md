@@ -283,6 +283,8 @@ Not:
 
 - Bu launch içinde `alarm_filter_enabled=true`.
 - Yani `bin/status` üstündeki `alarm=false` paketleri rota üretmez.
+- Varsayılan olarak `use_explicit_neighbors=false` ve `execute_intermediate_nodes=false`.
+- Yani alarm modunda robot aradaki bin node'larına uğramaz; `move_base` doğrudan alarm hedeflerine gider.
 
 ## 8. Mock data publisher bilgisayarını başlat
 

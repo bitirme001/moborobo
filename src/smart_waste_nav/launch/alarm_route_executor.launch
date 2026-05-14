@@ -60,6 +60,10 @@
            value="1.0" />
     <param name="max_exact_route_nodes"
            value="9" />
+    <param name="use_explicit_neighbors"
+           value="false" />
+    <param name="execute_intermediate_nodes"
+           value="false" />
 
   </node>
 </launch>

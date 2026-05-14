@@ -202,6 +202,12 @@ class AlarmRouteExecutor:
         self.goal_tolerance = float(rospy.get_param("~goal_tolerance", 0.75))
         self.wait_after_goal = float(rospy.get_param("~wait_after_goal", 1.0))
         self.max_exact_route_nodes = int(rospy.get_param("~max_exact_route_nodes", 9))
+        self.use_explicit_neighbors = coerce_bool(
+            rospy.get_param("~use_explicit_neighbors", False), default=False
+        )
+        self.execute_intermediate_nodes = coerce_bool(
+            rospy.get_param("~execute_intermediate_nodes", False), default=False
+        )
         self.alarm_filter_enabled = coerce_bool(
             rospy.get_param("~alarm_filter_enabled", False)
         )
@@ -259,6 +265,7 @@ class AlarmRouteExecutor:
         self.edge_cost_cache = {}
         self.shortest_path_cache = {}
         self.distance_matrix = {}
+        self.make_plan_service = None
         self.graph = self.build_graph()
         self.pending_alarm_nodes = OrderedDict()
         self.pending_alarm_lock = threading.Lock()
@@ -269,7 +276,6 @@ class AlarmRouteExecutor:
         self.mqtt_client = None
         self.mosquitto_process = None
         self.mosquitto_thread = None
-        self.make_plan_service = None
 
         self.client = actionlib.SimpleActionClient("move_base", MoveBaseAction)
         self.tf_listener = tf.TransformListener()
@@ -338,29 +344,36 @@ class AlarmRouteExecutor:
         graph = {node_id: {} for node_id in self.active_node_ids}
         has_explicit_edges = False
 
-        for node_id in self.active_node_ids:
-            node = self.nodes[node_id]
-            for neighbor_id in node.get("neighbors", []):
-                if neighbor_id not in self.nodes:
-                    rospy.logwarn(
-                        "Node %s references unknown neighbor %s", node_id, neighbor_id
-                    )
-                    continue
-                if not self.nodes[neighbor_id].get("active", True):
-                    continue
+        if self.use_explicit_neighbors:
+            for node_id in self.active_node_ids:
+                node = self.nodes[node_id]
+                for neighbor_id in node.get("neighbors", []):
+                    if neighbor_id not in self.nodes:
+                        rospy.logwarn(
+                            "Node %s references unknown neighbor %s", node_id, neighbor_id
+                        )
+                        continue
+                    if not self.nodes[neighbor_id].get("active", True):
+                        continue
 
-                has_explicit_edges = True
-                cost = self.compute_edge_cost(node_id, neighbor_id)
-                graph[node_id][neighbor_id] = cost
-                graph[neighbor_id][node_id] = cost
+                    has_explicit_edges = True
+                    cost = self.compute_edge_cost(node_id, neighbor_id)
+                    graph[node_id][neighbor_id] = cost
+                    graph[neighbor_id][node_id] = cost
 
         if has_explicit_edges:
             return graph
 
-        rospy.logwarn(
-            "No explicit node graph found in %s, using all-to-all Euclidean fallback.",
-            self.nodes_file,
-        )
+        if self.use_explicit_neighbors:
+            rospy.logwarn(
+                "No explicit node graph found in %s, using all-to-all connectivity.",
+                self.nodes_file,
+            )
+        else:
+            rospy.loginfo(
+                "Explicit node neighbors disabled, using all-to-all connectivity for alarm routing."
+            )
+
         for source_index, source_id in enumerate(self.active_node_ids):
             for target_id in self.active_node_ids[source_index + 1 :]:
                 cost = self.compute_edge_cost(source_id, target_id)
@@ -527,6 +540,14 @@ class AlarmRouteExecutor:
         self.handle_alarm_payload(message.data, source_label="ros_topic")
 
     def handle_alarm_payload(self, payload_text, source_label):
+        payload_text = str(payload_text or "").strip()
+        if not payload_text:
+            return
+
+        if source_label == "mqtt" and payload_text[0] not in "{[":
+            rospy.logdebug("Ignoring non-JSON MQTT line: %s", payload_text)
+            return
+
         try:
             alarm_payloads = self.parse_alarm_payloads(payload_text)
         except (ValueError, json.JSONDecodeError) as error:
@@ -595,6 +616,18 @@ class AlarmRouteExecutor:
             name_key = normalize_name(candidate)
             if name_key in self.name_index:
                 return self.name_index[name_key]
+
+        for candidate in candidate_fields:
+            numeric_id = self.parse_bin_numeric_id(candidate)
+            if numeric_id is None:
+                continue
+
+            inferred_node_id = "bin_%d" % numeric_id
+            if (
+                inferred_node_id in self.nodes
+                and self.nodes[inferred_node_id].get("active", True)
+            ):
+                return inferred_node_id
 
         latitude = coerce_float(payload.get("lat"))
         longitude = coerce_float(payload.get("lng"))
@@ -1251,7 +1284,14 @@ class AlarmRouteExecutor:
                 "Expanded node route: %s", " -> ".join(plan["expanded_node_ids"])
             )
 
-            for node_id in plan["expanded_node_ids"]:
+            execution_node_ids = (
+                plan["expanded_node_ids"]
+                if self.execute_intermediate_nodes
+                else plan["ordered_target_ids"]
+            )
+            rospy.loginfo("Execution goals: %s", " -> ".join(execution_node_ids))
+
+            for node_id in execution_node_ids:
                 if rospy.is_shutdown():
                     break
 

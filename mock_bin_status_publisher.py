@@ -12,7 +12,7 @@ except ImportError:
     mqtt = None
 
 
-PUBLISH_INTERVAL_SECONDS = 1.0
+PUBLISH_INTERVAL_SECONDS = 60.0
 
 # Mock publisher bilgisayarında doğrudan bu listeyi düzenleyebilirsiniz.
 MOCK_BINS = [
@@ -22,7 +22,7 @@ MOCK_BINS = [
         "lng": 32.73535,
         "weightKg": 8.0,
         "fillPercent": 25.0,
-        "isFull": True,
+        "isFull": False,
     },
     {
         "node_id": 3,
